@@ -26,9 +26,11 @@ int main(int argc, char* argv[])
 
 	int pos = 0;
 	char size[24];
-	sprintf(size, "%ld", file.size);
+	sprintf(size, "%ld", file.size-1);
 	printf("%s\n", size);
-	while(pos < file.size)
+
+	// file.size-1 is there because we add on a \0 when reading in the file just in case something goes wrong
+	while(pos < (file.size-1))
 	{
 		//printf("\n\n%d\n", pos);
 		pos += disassemble8080(file.src, pos);
