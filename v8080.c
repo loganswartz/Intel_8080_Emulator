@@ -65,8 +65,8 @@ void Emulate8080Op(CPUState8080* state) {
 	uint8_t* opcode = &state->memory[state->pc];
 
 	switch(*opcode) {
-		case 0x00: break;                                  // NOP
-		case 0x01:                                         // LXI B,word
+		case 0x00: break; // NOP
+		case 0x01: // LXI B,word
 		{
 				state->c = opcode[1];
 				state->b = opcode[2];
@@ -76,7 +76,7 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0x02: UnimplementedInstruction(state); break; // STAX   B
 		case 0x03: UnimplementedInstruction(state); break; // INX    B
 		case 0x04: UnimplementedInstruction(state); break; // INR    B
-		case 0x05: UnimplementedInstruction(state); break; // DCR    B
+		case 0x05: state->b -= 1; break; // DCR    B
 		case 0x06: // MVI    B,<data>
 			{
 				state->b = opcode[1];
@@ -85,24 +85,38 @@ void Emulate8080Op(CPUState8080* state) {
 			}
 		case 0x07: UnimplementedInstruction(state); break; // RLC
 		case 0x08: break; // NOP
-		case 0x09: UnimplementedInstruction(state); break; // DAD    B
+		case 0x09: // DAD    B
+			{
+				uint16_t hldouble = (state->h<<8) | (state->l); // append l to h
+				uint16_t rpdouble = (state->b<<8) | (state->c); // append l to h
+				uint32_t result = (uint32_t) hldouble + (uint32_t) rpdouble;
+				state->h = (result >> 8) & 0xff;
+				state->l = result & 0xff;
+				state->cc.cy = (result > 0xffff);
+				break;
+			}
 		case 0x0a: // LDAX   B
 		{
 				uint16_t memaddress = (state->b<<8) | (state->c); // append l to h
 				state->a = state->memory[memaddress];
-				state->pc += 1;
 				break;
 		}
 		case 0x0b: UnimplementedInstruction(state); break; // DCX    B
 		case 0x0c: UnimplementedInstruction(state); break; // INR    C
-		case 0x0d: UnimplementedInstruction(state); break; // DCR    C
+		case 0x0d: state->c -= 1; break; // DCR    C
 		case 0x0e: // MVI    C,<data>
 			{
 				state->c = opcode[1];
 				state->pc += 1;
 				break;
 			}
-		case 0x0f: UnimplementedInstruction(state); break; // RRC
+		case 0x0f: // RRC
+			{
+				state->cc.cy = ((state->a>>7) & 1); // extract MSB
+				state->a = state->a >> 1;
+				state->a |= (uint8_t) state->cc.cy << 7; // set MSB to 1 if cy is 1 (which is 1 if the LSB *was* 1 before the bitshifting)
+				break;
+			}
 		case 0x10: break; // NOP
 		case 0x11: // LXI    D,word
 		{
@@ -112,17 +126,37 @@ void Emulate8080Op(CPUState8080* state) {
 				break;
 		}
 		case 0x12: UnimplementedInstruction(state); break; // STAX   D
-		case 0x13: UnimplementedInstruction(state); break; // INX    D
+		case 0x13: // INX    D
+			{
+				uint16_t rpvalue = ((state->d<<8) | (state->e)) + 1; // append l to h and increment
+				state->d = (rpvalue>>8) & 0xff;
+				state->e = rpvalue & 0xff;
+				break;
+			}
 		case 0x14: UnimplementedInstruction(state); break; // INR    D
-		case 0x15: UnimplementedInstruction(state); break; // DCR    D
+		case 0x15: state->d -= 1; break; // DCR    D
 		case 0x16: UnimplementedInstruction(state); break; // MVI    D,<data>
 		case 0x17: UnimplementedInstruction(state); break; // RAL
 		case 0x18: break; // NOP
-		case 0x19: UnimplementedInstruction(state); break; // DAD    D
-		case 0x1a: UnimplementedInstruction(state); break; // LDAX   D
+		case 0x19: // DAD    D
+			{
+				uint16_t hldouble = (state->h<<8) | (state->l); // append l to h
+				uint16_t rpdouble = (state->d<<8) | (state->e); // append l to h
+				uint32_t result = (uint32_t) hldouble + (uint32_t) rpdouble;
+				state->h = (result >> 8) & 0xff;
+				state->l = result & 0xff;
+				state->cc.cy = (result > 0xffff);
+				break;
+			}
+		case 0x1a: // LDAX   D
+		{
+				uint16_t memaddress = (state->d<<8) | (state->e); // append l to h
+				state->a = state->memory[memaddress];
+				break;
+		}
 		case 0x1b: UnimplementedInstruction(state); break; // DCX    D
 		case 0x1c: UnimplementedInstruction(state); break; // INR    E
-		case 0x1d: UnimplementedInstruction(state); break; // DCR    E
+		case 0x1d: state->e -= 1; break; // DCR    E
 		case 0x1e: // MVI    E,<data>
 			{
 				state->e = opcode[1];
@@ -139,9 +173,15 @@ void Emulate8080Op(CPUState8080* state) {
 				break;
 		}
 		case 0x22: UnimplementedInstruction(state); break; // SHLD   $%02x%02x
-		case 0x23: UnimplementedInstruction(state); break; // INX    H
+		case 0x23: // INX    H
+			{
+				uint16_t rpvalue = ((state->h<<8) | (state->l)) + 1; // append l to h and increment
+				state->h = (rpvalue>>8) & 0xff;
+				state->l = rpvalue & 0xff;
+				break;
+			}
 		case 0x24: UnimplementedInstruction(state); break; // INR    H
-		case 0x25: UnimplementedInstruction(state); break; // DCR    H
+		case 0x25: state->h -= 1; break; // DCR    H
 		case 0x26: // MVI    H,<data>
 			{
 				state->h = opcode[1];
@@ -150,18 +190,26 @@ void Emulate8080Op(CPUState8080* state) {
 			}
 		case 0x27: UnimplementedInstruction(state); break; // DAA
 		case 0x28: break; // NOP
-		case 0x29: UnimplementedInstruction(state); break; // DAD    H
+		case 0x29: // DAD    H
+			{
+				uint16_t hldouble = (state->h<<8) | (state->l); // append l to h
+				uint32_t result = (uint32_t) hldouble + (uint32_t) hldouble;
+				state->h = (result >> 8) & 0xff;
+				state->l = result & 0xff;
+				state->cc.cy = (result > 0xffff);
+				break;
+			}
 		case 0x2a: UnimplementedInstruction(state); break; // LHLD   $%02x%02x
 		case 0x2b: UnimplementedInstruction(state); break; // DCX    H
 		case 0x2c: UnimplementedInstruction(state); break; // INR    L
-		case 0x2d: UnimplementedInstruction(state); break; // DCR    L
+		case 0x2d: state->l -= 1; break; // DCR    L
 		case 0x2e: // MVI    L,<data>
 			{
 				state->l = opcode[1];
 				state->pc += 1;
 				break;
 			}
-		case 0x2f: UnimplementedInstruction(state); break; // CMA
+		case 0x2f: state->a = ~state->a; break; // CMA
 		case 0x30: break; // NOP
 		case 0x31: // LXI    SP,word
 		{
@@ -169,10 +217,21 @@ void Emulate8080Op(CPUState8080* state) {
 				state->pc += 2; // advance program counter past our 2 data bytes
 				break;
 		}
-		case 0x32: UnimplementedInstruction(state); break; // STA    $%02x%02x
+		case 0x32: // STA    adr((h)(l))
+			{
+				uint16_t memaddress = (opcode[2]<<8) | (opcode[1]);
+				state->memory[memaddress] = state->a;
+				state->pc += 2;
+				break;
+			}
 		case 0x33: UnimplementedInstruction(state); break; // INX    SP
 		case 0x34: UnimplementedInstruction(state); break; // INR    M
-		case 0x35: UnimplementedInstruction(state); break; // DCR    M
+		case 0x35: // DCR    M
+			{
+				uint16_t memaddress = (state->h<<8) | (state->l); // append l to h
+				state->memory[memaddress] -= 1;
+				break;
+			}
 		case 0x36: // MVI    M,<data>
 			{
 				uint16_t memaddress = (state->h<<8) | (state->l); // append l to h
@@ -183,15 +242,16 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0x37: UnimplementedInstruction(state); break; // STC
 		case 0x38: break; // NOP
 		case 0x39: UnimplementedInstruction(state); break; // DAD    SP
-		case 0x3a: // LDA    $%02x%02x
+		case 0x3a: // LDA    adr((h)(l))
 			{
-				state->a = (opcode[2] << 8) | (opcode[1]); // append 2 bytes
+				uint16_t memaddress = (opcode[2] << 8) | (opcode[1]); // append 2 bytes
+				state->a = state->memory[memaddress];
 				state->pc += 2; // advance program counter past our 2 data bytes
 				break;
 			}
 		case 0x3b: UnimplementedInstruction(state); break; // DCX    SP
 		case 0x3c: UnimplementedInstruction(state); break; // INR    A
-		case 0x3d: UnimplementedInstruction(state); break; // DCR    A
+		case 0x3d: state->a -= 1; break; // DCR    A
 		case 0x3e: // MVI    A,<data>
 			{
 				state->a = opcode[1];
@@ -540,7 +600,12 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0xa4: UnimplementedInstruction(state); break; // ANA    H
 		case 0xa5: UnimplementedInstruction(state); break; // ANA    L
 		case 0xa6: UnimplementedInstruction(state); break; // ANA    M
-		case 0xa7: UnimplementedInstruction(state); break; // ANA    A
+		case 0xa7: // ANA    A
+			{
+				// A & A == A, so no need to waste time computing this, nothing changes
+				// we do have to clear the cy flag though as per the specs of the 8080
+				state->cc.cy = 0;
+			}
 		case 0xa8: UnimplementedInstruction(state); break; // XRA    B
 		case 0xa9: UnimplementedInstruction(state); break; // XRA    C
 		case 0xaa: UnimplementedInstruction(state); break; // XRA    D
@@ -548,7 +613,15 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0xac: UnimplementedInstruction(state); break; // XRA    H
 		case 0xad: UnimplementedInstruction(state); break; // XRA    L
 		case 0xae: UnimplementedInstruction(state); break; // XRA    M
-		case 0xaf: UnimplementedInstruction(state); break; // XRA    A
+		case 0xaf: // XRA    A
+			{
+				// A ^ A == 0, so we set register A to 0
+				// we also reset the cy and ac flags
+				state->a = 0;
+				state->cc.cy = 0;
+				state->cc.ac = 0;
+				break;
+			}
 		case 0xb0: UnimplementedInstruction(state); break; // ORA    B
 		case 0xb1: UnimplementedInstruction(state); break; // ORA    C
 		case 0xb2: UnimplementedInstruction(state); break; // ORA    D
@@ -566,11 +639,31 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0xbe: UnimplementedInstruction(state); break; // CMP    M
 		case 0xbf: UnimplementedInstruction(state); break; // CMP    A
 		case 0xc0: UnimplementedInstruction(state); break;
-		case 0xc1: UnimplementedInstruction(state); break;
-		case 0xc2: UnimplementedInstruction(state); break;
-		case 0xc3: UnimplementedInstruction(state); break;
+		case 0xc1: // POP   B
+			{
+				state->c = state->memory[state->sp]; // get memory contents from stack pointer location
+				state->b = state->memory[(state->sp)+1];
+				state->sp += 2;
+				break;
+			}
+		case 0xc2: // JNZ adr
+			{
+				if(!(state->cc.z)) {
+					state->pc = (opcode[2] << 8) | (opcode[1]); // append 2 bytes
+				} else {
+					state->pc += 2;
+					break;
+				}
+			}
+		case 0xc3: state->pc = (opcode[2] << 8) | (opcode[1]); break; // JMP adr
 		case 0xc4: UnimplementedInstruction(state); break;
-		case 0xc5: UnimplementedInstruction(state); break;
+		case 0xc5: // PUSH B
+			{
+				state->memory[(state->sp)-1] = state->b;
+				state->memory[(state->sp)-2] = state->c;
+				state->sp -= 2;
+				break;
+			}
 		case 0xc6: // ADI  A   (ADD Immediate to A)
 			{
 				uint16_t result = (uint16_t) state->a + (uint16_t) opcode[1];
@@ -584,19 +677,61 @@ void Emulate8080Op(CPUState8080* state) {
 			}
 		case 0xc7: UnimplementedInstruction(state); break;
 		case 0xc8: UnimplementedInstruction(state); break;
-		case 0xc9: UnimplementedInstruction(state); break;
-		case 0xca: UnimplementedInstruction(state); break;
+		case 0xc9: // RET
+			{
+				state->pc = (uint16_t) ((state->memory[state->sp] << 8) & 0xff00) | (state->memory[(state->sp)+1] & 0xff); // grab and put sp and sp+1 into pc
+				state->pc += 2;
+				break;
+			}
+		case 0xca: // JZ adr
+			{
+				if(state->cc.z) {
+					state->pc = (opcode[2] << 8) | (opcode[1]); // append 2 bytes
+				} else {
+					state->pc += 2;
+					break;
+				}
+			}
 		case 0xcb: UnimplementedInstruction(state); break;
 		case 0xcc: UnimplementedInstruction(state); break;
-		case 0xcd: UnimplementedInstruction(state); break;
-		case 0xce: UnimplementedInstruction(state); break;
+		case 0xcd: // CALL adr
+			{
+				state->memory[(state->sp)-1] = (state->pc>>8) & 0xff;
+				state->memory[(state->sp)-2] = state->pc & 0xff;
+				state->sp -= 2;
+				state->pc = (uint16_t) (opcode[2]<<8) | (uint16_t) opcode[1];
+				break;
+			}
+		case 0xce: // ACI
+			{
+				uint16_t result = (uint16_t) state->a + (uint16_t) opcode[1] + (uint16_t) state->cc.cy;
+				state->cc.z = ((result & 0xff) == 0);
+				state->cc.s = ((result & 0x80) != 0);
+				state->cc.cy = (result > 0xff);
+				state->cc.p = Parity(result&0xff);
+				state->a = result & 0xff;
+				state->pc += 1;
+				break;
+			}
 		case 0xcf: UnimplementedInstruction(state); break;
 		case 0xd0: UnimplementedInstruction(state); break;
-		case 0xd1: UnimplementedInstruction(state); break;
+		case 0xd1: // POP D
+			{
+				state->d = state->memory[state->sp]; // get memory contents from stack pointer location
+				state->e = state->memory[(state->sp)+1];
+				state->sp += 2;
+				break;
+			}
 		case 0xd2: UnimplementedInstruction(state); break;
-		case 0xd3: UnimplementedInstruction(state); break;
+		case 0xd3: state->pc++; break; // OUT d8 ---------> unknown implementation
 		case 0xd4: UnimplementedInstruction(state); break;
-		case 0xd5: UnimplementedInstruction(state); break;
+		case 0xd5: // PUSH D
+			{
+				state->memory[(state->sp)-1] = state->d;
+				state->memory[(state->sp)-2] = state->e;
+				state->sp -= 2;
+				break;
+			}
 		case 0xd6: UnimplementedInstruction(state); break;
 		case 0xd7: UnimplementedInstruction(state); break;
 		case 0xd8: UnimplementedInstruction(state); break;
@@ -608,36 +743,93 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0xde: UnimplementedInstruction(state); break;
 		case 0xdf: UnimplementedInstruction(state); break;
 		case 0xe0: UnimplementedInstruction(state); break;
-		case 0xe1: UnimplementedInstruction(state); break;
+		case 0xe1: // POP H
+			{
+				state->h = state->memory[state->sp]; // get memory contents from stack pointer location
+				state->l = state->memory[(state->sp)+1];
+				state->sp += 2;
+				break;
+			}
 		case 0xe2: UnimplementedInstruction(state); break;
 		case 0xe3: UnimplementedInstruction(state); break;
 		case 0xe4: UnimplementedInstruction(state); break;
-		case 0xe5: UnimplementedInstruction(state); break;
-		case 0xe6: UnimplementedInstruction(state); break;
+		case 0xe5: // PUSH H
+			{
+				state->memory[(state->sp)-1] = state->h;
+				state->memory[(state->sp)-2] = state->l;
+				state->sp -= 2;
+				break;
+			}
+		case 0xe6: // ANI
+			{
+				state->a = state->a & opcode[1];
+				state->cc.cy = 0;
+				state->cc.ac = 0;
+				state->pc += 1;
+				break;
+			}
 		case 0xe7: UnimplementedInstruction(state); break;
 		case 0xe8: UnimplementedInstruction(state); break;
 		case 0xe9: UnimplementedInstruction(state); break;
 		case 0xea: UnimplementedInstruction(state); break;
-		case 0xeb: UnimplementedInstruction(state); break;
+		case 0xeb: // XCNG
+			{
+				uint8_t htemp = state->h;
+				uint8_t ltemp = state->l;
+				state->h = state->d;
+				state->l = state->e;
+				state->d = htemp;
+				state->e = ltemp;
+				break;
+			}
 		case 0xec: UnimplementedInstruction(state); break;
 		case 0xed: UnimplementedInstruction(state); break;
 		case 0xee: UnimplementedInstruction(state); break;
 		case 0xef: UnimplementedInstruction(state); break;
 		case 0xf0: UnimplementedInstruction(state); break;
-		case 0xf1: UnimplementedInstruction(state); break;
+		case 0xf1: // POP PSW
+			{
+				state->cc.cy = (state->memory[state->sp]) & 1;
+				state->cc.p = (state->memory[state->sp]>>1) & 1;
+				state->cc.ac = (state->memory[state->sp]>>3) & 1;
+				state->cc.z = (state->memory[state->sp]>>5) & 1;
+				state->cc.s = (state->memory[state->sp]>>6) & 1;
+				state->a = state->memory[(state->sp)+1];
+				state->sp += 2;
+				break;
+			}
 		case 0xf2: UnimplementedInstruction(state); break;
 		case 0xf3: UnimplementedInstruction(state); break;
 		case 0xf4: UnimplementedInstruction(state); break;
-		case 0xf5: UnimplementedInstruction(state); break;
+		case 0xf5: // PUSH PSW
+			{
+				uint8_t cy = (state->cc.cy) & 1;
+				uint8_t p = (state->cc.cy) & (uint8_t) (1<<2);
+				uint8_t ac = (state->cc.cy) & (uint8_t) (1<<4);
+				uint8_t z = (state->cc.cy) & (uint8_t) (1<<6);
+				uint8_t s = (state->cc.cy) & (uint8_t) (1<<7);
+				uint8_t psw = cy | p | ac | z | s;
+				state->memory[(state->sp)-1] = state->a;
+				state->memory[(state->sp)-2] = psw;
+				state->sp -= 2;
+				break;
+			}
 		case 0xf6: UnimplementedInstruction(state); break;
 		case 0xf7: UnimplementedInstruction(state); break;
 		case 0xf8: UnimplementedInstruction(state); break;
 		case 0xf9: UnimplementedInstruction(state); break;
 		case 0xfa: UnimplementedInstruction(state); break;
-		case 0xfb: UnimplementedInstruction(state); break;
+		case 0xfb: state->pc++; break; // EI (enable interrupts) ------> not implemented, just skip for now
 		case 0xfc: UnimplementedInstruction(state); break;
 		case 0xfd: UnimplementedInstruction(state); break;
-		case 0xfe: UnimplementedInstruction(state); break;
+		case 0xfe: // CPI d8
+			{
+				state->cc.z = (state->a == opcode[1]);
+				state->cc.cy = (state->a < opcode[1]);
+				state->a -= opcode[1];
+				state->pc += 1;
+				break;
+			}
 		case 0xff: UnimplementedInstruction(state); break;
 	}
 	state->pc += 1; // increment program counter
