@@ -2,12 +2,12 @@
 #include <stdlib.h>
 
 
-struct File {
+typedef struct File {
 	size_t size;
 	char* src;
-};
+} File;
 
-struct File loadf(char path[]);
+File loadf(char path[]);
 int disassemble8080(char* buffer, int pos);
 
 
@@ -22,7 +22,7 @@ int main(int argc, char* argv[])
 		return(1);
 	}
 
-	struct File file = loadf(argv[1]);
+	File file = loadf(argv[1]);
 
 	int pos = 0;
 	char size[24];
@@ -41,9 +41,9 @@ int main(int argc, char* argv[])
 
 ////////// Definitions ////////////
 
-struct File loadf(char path[])
+File loadf(char path[])
 {
-	struct File infile;
+	File infile;
 
 	char* source = NULL;
 	FILE* fp = fopen(path, "r");
