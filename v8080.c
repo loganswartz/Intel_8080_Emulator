@@ -1,82 +1,96 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
-
-typedef struct ConditionCodes {
-	uint8_t    z:1; // zero flag (result is zero)
-	uint8_t    s:1; // sign flag (indicates if most significant bit of result is set)
-	uint8_t    p:1; // parity flag (set if result is even, not set if odd)
-	uint8_t    cy:1; // carry flag (set if instruction resulted in a carry on most significant bit)
-	uint8_t    ac:1; // auxiliary carry flag (used in BCD math)
-	uint8_t    pad:3; // something???
-} ConditionCodes;
-
-typedef struct CPUState8080 {
-	uint8_t    a; // Accumulator register
-	uint8_t    b;
-	uint8_t    c;
-	uint8_t    d;
-	uint8_t    e;
-	uint8_t    h;
-	uint8_t    l;
-	uint16_t   sp;
-	uint16_t   pc; // program counter
-	uint8_t    *memory;
-	struct     ConditionCodes cc;
-	uint8_t    enable;
-} CPUState8080;
-
-
-int Parity(uint8_t input);
-void UnimplementedInstruction(CPUState8080* state);
-void Emulate8080Op(CPUState8080* state);
+#include "v8080.h"
+#include "8080DisassembleLib.h"
 
 
 
-int main() {
+int main(int argc, char* argv[])
+{
+	/*
+	if(argc > 2) {
+		printf("Only 1 arg expected.");
+		exit(1);
+	} else if(argc == 1) {
+		printf("Please specify a file to run.");
+		exit(1);
+	}
+	*/
+
+	int halt = 0;
+	int stepsize = 1548;
+	int cycles = 0;
+	int i = 1;
+	CPUState8080* state = Init8080();
+	ReadFileIntoMemoryAt(state, "games/space_invaders/invaders.h", 0);
+	ReadFileIntoMemoryAt(state, "games/space_invaders/invaders.g", 0x800);
+	ReadFileIntoMemoryAt(state, "games/space_invaders/invaders.f", 0x1000);
+	ReadFileIntoMemoryAt(state, "games/space_invaders/invaders.e", 0x1800);
+
+	while(halt == 0)
+	{
+		printf("\nOpcode = %x\n", state->memory[state->pc]);
+		Disassemble8080(state);
+		halt = Emulate8080(state);
+		cycles++;
+		printf("\tC=%d,P=%d,S=%d,Z=%d\n", state->cc.cy, state->cc.p, state->cc.s, state->cc.z);
+		printf("\tA $%02x B $%02x C $%02x D $%02x E $%02x H $%02x L $%02x SP %04x\n", state->a, state->b, state->c, state->d, state->e, state->h, state->l, state->sp);
+		if(i >= stepsize) {
+			printf("Cycle count = %d\n", cycles);
+			getchar();
+			stepsize = 5;
+			i = 1;
+		} else {
+			i++;
+		}
+	}
+
 	exit(0);
 }
 
 
-
-int Parity(uint8_t input) {
-	// XOR the top and bottom halves of the number until we get down to just 1 bit to return
-	// (unknown if this works, as such, I'm using a more "common-sense" approach)
-	// uint8_t inGen1 = (input & 0b1111) ^ ((input >> 4) & 0b1111)
-	// uint8_t inGen2 = (inGen1 & 0b11) ^ ((inGen1 >> 2) & 0b11)
-	// return ((inGen2 & 1) ^ ((inGen2 >> 1) & 1))
-	int bit1   = (input) & 1;
-	int bit2   = (input >> 1) & 1;
-	int bit4   = (input >> 2) & 1;
-	int bit8   = (input >> 3) & 1;
-	int bit16  = (input >> 4) & 1;
-	int bit32  = (input >> 5) & 1;
-	int bit64  = (input >> 6) & 1;
-	int bit128 = (input >> 7) & 1;
-	return ((bit1 + bit2 + bit4 + bit8 + bit16 + bit32 + bit64 + bit128) % 2);
+int parity(int x, int size)
+{
+	int i;
+	int p = 0;
+	x = (x & ((1<<size)-1));
+	for (i=0; i<size; i++)
+	{
+		if (x & 0x1) p++;
+		x = x >> 1;
+	}
+	return (0 == (p & 0x1));
 }
+
 
 void UnimplementedInstruction(CPUState8080* state) {
 	printf("Error: instruction not implemented");
 	exit(1);
 }
 
-void Emulate8080Op(CPUState8080* state) {
+int Emulate8080(CPUState8080* state) {
 	uint8_t* opcode = &state->memory[state->pc];
+	int halt = 0;
 
 	switch(*opcode) {
 		case 0x00: break; // NOP
 		case 0x01: // LXI B,word
 		{
-				state->c = opcode[1];
 				state->b = opcode[2];
+				state->c = opcode[1];
 				state->pc += 2; // advance program counter past our 2 data bytes
 				break;
 		}
 		case 0x02: UnimplementedInstruction(state); break; // STAX   B
 		case 0x03: UnimplementedInstruction(state); break; // INX    B
-		case 0x04: UnimplementedInstruction(state); break; // INR    B
-		case 0x05: state->b -= 1; break; // DCR    B
+		case 0x04: state->b += 1; break; // INR    B
+		case 0x05:// DCR    B
+			{
+				EvalFlags(state, state->b-1);
+				state->b -= 1;
+				break;
+			}
 		case 0x06: // MVI    B,<data>
 			{
 				state->b = opcode[1];
@@ -102,8 +116,13 @@ void Emulate8080Op(CPUState8080* state) {
 				break;
 		}
 		case 0x0b: UnimplementedInstruction(state); break; // DCX    B
-		case 0x0c: UnimplementedInstruction(state); break; // INR    C
+		case 0x0c: state->c += 1; break; // INR    C
 		case 0x0d: state->c -= 1; break; // DCR    C
+			{
+				EvalFlags(state, state->c-1);
+				state->c -= 1;
+				break;
+			}
 		case 0x0e: // MVI    C,<data>
 			{
 				state->c = opcode[1];
@@ -120,21 +139,26 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0x10: break; // NOP
 		case 0x11: // LXI    D,word
 		{
-				state->d = opcode[1];
-				state->e = opcode[2];
+				state->d = opcode[2];
+				state->e = opcode[1];
 				state->pc += 2; // advance program counter past our 2 data bytes
 				break;
 		}
 		case 0x12: UnimplementedInstruction(state); break; // STAX   D
 		case 0x13: // INX    D
 			{
-				uint16_t rpvalue = ((state->d<<8) | (state->e)) + 1; // append l to h and increment
-				state->d = (rpvalue>>8) & 0xff;
-				state->e = rpvalue & 0xff;
+				state->e++;
+				if (state->e == 0)
+					state->d++;
 				break;
 			}
-		case 0x14: UnimplementedInstruction(state); break; // INR    D
+		case 0x14: state->d += 1; break; // INR    D
 		case 0x15: state->d -= 1; break; // DCR    D
+			{
+				EvalFlags(state, state->d-1);
+				state->d -= 1;
+				break;
+			}
 		case 0x16: UnimplementedInstruction(state); break; // MVI    D,<data>
 		case 0x17: UnimplementedInstruction(state); break; // RAL
 		case 0x18: break; // NOP
@@ -150,13 +174,18 @@ void Emulate8080Op(CPUState8080* state) {
 			}
 		case 0x1a: // LDAX   D
 		{
-				uint16_t memaddress = (state->d<<8) | (state->e); // append l to h
+				uint16_t memaddress = (state->d<<8) | state->e; // append l to h
 				state->a = state->memory[memaddress];
 				break;
 		}
 		case 0x1b: UnimplementedInstruction(state); break; // DCX    D
-		case 0x1c: UnimplementedInstruction(state); break; // INR    E
+		case 0x1c: state->e += 1; break; // INR    E
 		case 0x1d: state->e -= 1; break; // DCR    E
+			{
+				EvalFlags(state, state->e-1);
+				state->e -= 1;
+				break;
+			}
 		case 0x1e: // MVI    E,<data>
 			{
 				state->e = opcode[1];
@@ -167,21 +196,26 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0x20: break; // NOP
 		case 0x21: // LXI    H,word
 		{
-				state->h = opcode[1];
-				state->l = opcode[2];
+				state->h = opcode[2];
+				state->l = opcode[1];
 				state->pc += 2; // advance program counter past our 2 data bytes
 				break;
 		}
 		case 0x22: UnimplementedInstruction(state); break; // SHLD   $%02x%02x
 		case 0x23: // INX    H
 			{
-				uint16_t rpvalue = ((state->h<<8) | (state->l)) + 1; // append l to h and increment
-				state->h = (rpvalue>>8) & 0xff;
-				state->l = rpvalue & 0xff;
+				state->l++;
+				if (state->l == 0)
+					state->h++;
 				break;
 			}
-		case 0x24: UnimplementedInstruction(state); break; // INR    H
+		case 0x24: state->h += 1; break; // INR    H
 		case 0x25: state->h -= 1; break; // DCR    H
+			{
+				EvalFlags(state, state->h-1);
+				state->h -= 1;
+				break;
+			}
 		case 0x26: // MVI    H,<data>
 			{
 				state->h = opcode[1];
@@ -201,8 +235,13 @@ void Emulate8080Op(CPUState8080* state) {
 			}
 		case 0x2a: UnimplementedInstruction(state); break; // LHLD   $%02x%02x
 		case 0x2b: UnimplementedInstruction(state); break; // DCX    H
-		case 0x2c: UnimplementedInstruction(state); break; // INR    L
+		case 0x2c: state->l += 1; break; // INR    L
 		case 0x2d: state->l -= 1; break; // DCR    L
+			{
+				EvalFlags(state, state->l-1);
+				state->l -= 1;
+				break;
+			}
 		case 0x2e: // MVI    L,<data>
 			{
 				state->l = opcode[1];
@@ -229,6 +268,7 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0x35: // DCR    M
 			{
 				uint16_t memaddress = (state->h<<8) | (state->l); // append l to h
+				EvalFlags(state, state->memory[memaddress]-1);
 				state->memory[memaddress] -= 1;
 				break;
 			}
@@ -250,8 +290,13 @@ void Emulate8080Op(CPUState8080* state) {
 				break;
 			}
 		case 0x3b: UnimplementedInstruction(state); break; // DCX    SP
-		case 0x3c: UnimplementedInstruction(state); break; // INR    A
+		case 0x3c: state->a += 1; break; // INR    A
 		case 0x3d: state->a -= 1; break; // DCR    A
+			{
+				EvalFlags(state, state->a-1);
+				state->a -= 1;
+				break;
+			}
 		case 0x3e: // MVI    A,<data>
 			{
 				state->a = opcode[1];
@@ -373,7 +418,7 @@ void Emulate8080Op(CPUState8080* state) {
 				state->memory[memaddress] = state->l;
 				break;
 			}
-		case 0x76: UnimplementedInstruction(state); break; // HLT
+		case 0x76: halt = 1; break; // HLT
 		case 0x77: // MOV    M,A
 			{
 				uint16_t memaddress = (state->h<<8) | (state->l); // append l to h
@@ -420,7 +465,7 @@ void Emulate8080Op(CPUState8080* state) {
 				}
 
 				// check/set parity flag
-				state->cc.p = Parity(result & 0xff);
+				state->cc.p = parity(result, 8);
 				state->a = result & 0xff;
 
 				break;
@@ -428,50 +473,35 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0x81: // ADD    C
 			{
 				uint16_t result = (uint16_t) state->a + (uint16_t) state->c;
-				state->cc.z = ((result & 0xff) == 0);
-				state->cc.s = ((result & 0x80) != 0);
-				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result&0xff);
+				EvalFlags(state, result);
 				state->a = result & 0xff;
 				break;
 			}
 		case 0x82: // ADD    D
 			{
 				uint16_t result = (uint16_t) state->a + (uint16_t) state->d;
-				state->cc.z = ((result & 0xff) == 0);
-				state->cc.s = ((result & 0x80) != 0);
-				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result&0xff);
+				EvalFlags16(state, result);
 				state->a = result & 0xff;
 				break;
 			}
 		case 0x83: // ADD    E
 			{
 				uint16_t result = (uint16_t) state->a + (uint16_t) state->e;
-				state->cc.z = ((result & 0xff) == 0);
-				state->cc.s = ((result & 0x80) != 0);
-				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result&0xff);
+				EvalFlags16(state, result);
 				state->a = result & 0xff;
 				break;
 			}
 		case 0x84: // ADD    H
 			{
 				uint16_t result = (uint16_t) state->a + (uint16_t) state->h;
-				state->cc.z = ((result & 0xff) == 0);
-				state->cc.s = ((result & 0x80) != 0);
-				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result&0xff);
+				EvalFlags16(state, result);
 				state->a = result & 0xff;
 				break;
 			}
 		case 0x85: // ADD    L
 			{
 				uint16_t result = (uint16_t) state->a + (uint16_t) state->l;
-				state->cc.z = ((result & 0xff) == 0);
-				state->cc.s = ((result & 0x80) != 0);
-				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result&0xff);
+				EvalFlags16(state, result);
 				state->a = result & 0xff;
 				break;
 			}
@@ -479,20 +509,14 @@ void Emulate8080Op(CPUState8080* state) {
 			{
 				uint16_t memaddress = (state->h<<8) | (state->l); // append l to h
 				uint16_t result = (uint16_t) state->a + state->memory[memaddress];
-				state->cc.z = ((result & 0xff) == 0);
-				state->cc.s = ((result & 0x80) != 0);
-				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result & 0xff);
+				EvalFlags16(state, result);
 				state->a = result & 0xff;
 				break;
 			}
 		case 0x87: // ADD    A
 			{
 				uint16_t result = (uint16_t) state->a + (uint16_t) state->a;
-				state->cc.z = ((result & 0xff) == 0);
-				state->cc.s = ((result & 0x80) != 0);
-				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result & 0xff);
+				EvalFlags16(state, result);
 				state->a = result & 0xff;
 				break;
 			}
@@ -502,7 +526,7 @@ void Emulate8080Op(CPUState8080* state) {
 				state->cc.z = ((result & 0xff) == 0);
 				state->cc.s = ((result & 0x80) != 0);
 				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result & 0xff);
+				state->cc.p = parity(result, 8);
 				state->a = result & 0xff;
 				break;
 			}
@@ -512,7 +536,7 @@ void Emulate8080Op(CPUState8080* state) {
 				state->cc.z = ((result & 0xff) == 0);
 				state->cc.s = ((result & 0x80) != 0);
 				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result & 0xff);
+				state->cc.p = parity(result, 8);
 				state->a = result & 0xff;
 				break;
 			}
@@ -522,7 +546,7 @@ void Emulate8080Op(CPUState8080* state) {
 				state->cc.z = ((result & 0xff) == 0);
 				state->cc.s = ((result & 0x80) != 0);
 				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result & 0xff);
+				state->cc.p = parity(result, 8);
 				state->a = result & 0xff;
 				break;
 			}
@@ -532,7 +556,7 @@ void Emulate8080Op(CPUState8080* state) {
 				state->cc.z = ((result & 0xff) == 0);
 				state->cc.s = ((result & 0x80) != 0);
 				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result & 0xff);
+				state->cc.p = parity(result, 8);
 				state->a = result & 0xff;
 				break;
 			}
@@ -542,7 +566,7 @@ void Emulate8080Op(CPUState8080* state) {
 				state->cc.z = ((result & 0xff) == 0);
 				state->cc.s = ((result & 0x80) != 0);
 				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result & 0xff);
+				state->cc.p = parity(result, 8);
 				state->a = result & 0xff;
 				break;
 			}
@@ -552,7 +576,7 @@ void Emulate8080Op(CPUState8080* state) {
 				state->cc.z = ((result & 0xff) == 0);
 				state->cc.s = ((result & 0x80) != 0);
 				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result & 0xff);
+				state->cc.p = parity(result, 8);
 				state->a = result & 0xff;
 				break;
 			}
@@ -563,7 +587,7 @@ void Emulate8080Op(CPUState8080* state) {
 				state->cc.z = ((result & 0xff) == 0);
 				state->cc.s = ((result & 0x80) != 0);
 				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result & 0xff);
+				state->cc.p = parity(result, 8);
 				state->a = result & 0xff;
 				break;
 			}
@@ -573,7 +597,7 @@ void Emulate8080Op(CPUState8080* state) {
 				state->cc.z = ((result & 0xff) == 0);
 				state->cc.s = ((result & 0x80) != 0);
 				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result & 0xff);
+				state->cc.p = parity(result, 8);
 				state->a = result & 0xff;
 				break;
 			}
@@ -641,21 +665,23 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0xc0: UnimplementedInstruction(state); break;
 		case 0xc1: // POP   B
 			{
-				state->c = state->memory[state->sp]; // get memory contents from stack pointer location
-				state->b = state->memory[(state->sp)+1];
+				state->c = state->memory[(state->sp)+1]; // get memory contents from stack pointer location
+				state->b = state->memory[(state->sp)+2];
 				state->sp += 2;
 				break;
 			}
 		case 0xc2: // JNZ adr
 			{
 				if(!(state->cc.z)) {
-					state->pc = (opcode[2] << 8) | (opcode[1]); // append 2 bytes
+					// -1 is to counteract the universal pc increment from throwing off our jump
+					state->pc = (opcode[2] << 8) | (opcode[1]) - 1; // append 2 bytes
+					break;
 				} else {
 					state->pc += 2;
 					break;
 				}
 			}
-		case 0xc3: state->pc = (opcode[2] << 8) | (opcode[1]); break; // JMP adr
+		case 0xc3: state->pc = (opcode[2] << 8) | (opcode[1]) - 1; break; // JMP adr
 		case 0xc4: UnimplementedInstruction(state); break;
 		case 0xc5: // PUSH B
 			{
@@ -667,10 +693,7 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0xc6: // ADI  A   (ADD Immediate to A)
 			{
 				uint16_t result = (uint16_t) state->a + (uint16_t) opcode[1];
-				state->cc.z = ((result & 0xff) == 0);
-				state->cc.s = ((result & 0x80) != 0);
-				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result&0xff);
+				EvalFlags16(state, result);
 				state->a = result & 0xff;
 				state->pc += 1;
 				break;
@@ -679,14 +702,15 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0xc8: UnimplementedInstruction(state); break;
 		case 0xc9: // RET
 			{
-				state->pc = (uint16_t) ((state->memory[state->sp] << 8) & 0xff00) | (state->memory[(state->sp)+1] & 0xff); // grab and put sp and sp+1 into pc
+				state->pc = state->memory[state->sp] | (state->memory[state->sp+1] << 8); // grab and put sp and sp+1 into pc
 				state->pc += 2;
 				break;
 			}
 		case 0xca: // JZ adr
 			{
 				if(state->cc.z) {
-					state->pc = (opcode[2] << 8) | (opcode[1]); // append 2 bytes
+					state->pc = (opcode[2] << 8) | (opcode[1]) - 1; // append 2 bytes
+					break;
 				} else {
 					state->pc += 2;
 					break;
@@ -700,15 +724,13 @@ void Emulate8080Op(CPUState8080* state) {
 				state->memory[(state->sp)-2] = state->pc & 0xff;
 				state->sp -= 2;
 				state->pc = (uint16_t) (opcode[2]<<8) | (uint16_t) opcode[1];
+				state->pc -= 1; // counteract standard increment from throwing off our subprocess call address
 				break;
 			}
 		case 0xce: // ACI
 			{
 				uint16_t result = (uint16_t) state->a + (uint16_t) opcode[1] + (uint16_t) state->cc.cy;
-				state->cc.z = ((result & 0xff) == 0);
-				state->cc.s = ((result & 0x80) != 0);
-				state->cc.cy = (result > 0xff);
-				state->cc.p = Parity(result&0xff);
+				EvalFlags(state, result);
 				state->a = result & 0xff;
 				state->pc += 1;
 				break;
@@ -717,8 +739,8 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0xd0: UnimplementedInstruction(state); break;
 		case 0xd1: // POP D
 			{
-				state->d = state->memory[state->sp]; // get memory contents from stack pointer location
-				state->e = state->memory[(state->sp)+1];
+				state->d = state->memory[(state->sp)+1]; // get memory contents from stack pointer location
+				state->e = state->memory[(state->sp)+2];
 				state->sp += 2;
 				break;
 			}
@@ -745,8 +767,8 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0xe0: UnimplementedInstruction(state); break;
 		case 0xe1: // POP H
 			{
-				state->h = state->memory[state->sp]; // get memory contents from stack pointer location
-				state->l = state->memory[(state->sp)+1];
+				state->h = state->memory[(state->sp)+1]; // get memory contents from stack pointer location
+				state->l = state->memory[(state->sp)+2];
 				state->sp += 2;
 				break;
 			}
@@ -824,6 +846,7 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0xfd: UnimplementedInstruction(state); break;
 		case 0xfe: // CPI d8
 			{
+				EvalFlags(state, state->a-opcode[1]);
 				state->cc.z = (state->a == opcode[1]);
 				state->cc.cy = (state->a < opcode[1]);
 				state->a -= opcode[1];
@@ -833,5 +856,28 @@ void Emulate8080Op(CPUState8080* state) {
 		case 0xff: UnimplementedInstruction(state); break;
 	}
 	state->pc += 1; // increment program counter
+	return halt; // halt = 0 means continue CPU emulation, halt = 1 means quit
 }
 
+CPUState8080* Init8080(void)
+{
+	CPUState8080* state = calloc(1,sizeof(CPUState8080));
+	state->memory = malloc(0x10000);  //16K
+	return state;
+}
+
+void EvalFlags(CPUState8080* state, uint8_t result)
+{
+	state->cc.z = (result == 0);
+	state->cc.s = ((result >> 7) == 1);
+	state->cc.cy = (result > 0xff);
+	state->cc.p = parity(result, 8);
+}
+
+void EvalFlags16(CPUState8080* state, uint16_t result)
+{
+	state->cc.z = (result == 0);
+	state->cc.s = ((result >> 7) == 1);
+	state->cc.cy = (result > 0xff);
+	state->cc.p = parity(result, 8);
+}
